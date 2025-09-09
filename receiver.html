@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head><title>Receiver</title></head>
+<body>
+  <h2>Receiver</h2>
+  <video id="remote" autoplay playsinline controls style="width: 80%; border: 1px solid black;"></video>
+
+  <script>
+    let peer = null;
+    const video = document.getElementById("remote");
+    const socket = new WebSocket(`wss://${location.host}`);
+
+    socket.onopen = () => {
+      console.log("Socket open: registering as receiver");
+      socket.send(JSON.stringify({ type: "register", role: "receiver" }));
+    };
+
+    function createPeer() {
+      const newPeer = new RTCPeerConnection();
+
+      newPeer.ontrack = (event) => {
+        console.log("Track event:", event);
+        video.srcObject = event.streams[0];
+      };
+
+      newPeer.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log("Sending candidate to sender");
+          socket.send(JSON.stringify({ type: "candidate", candidate: event.candidate }));
+        }
+      };
+
+      newPeer.onconnectionstatechange = () => {
+        console.log("Peer connection state:", newPeer.connectionState);
+      };
+
+      return newPeer;
+    }
+
+    socket.onmessage = async (event) => {
+      const data = JSON.parse(event.data);
+      console.log("Received message:", data);
+
+      if (data.type === "offer") {
+        if (peer) {
+          peer.close();
+          peer = null;
+        }
+        peer = createPeer();
+        await peer.setRemoteDescription(data.offer);
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        socket.send(JSON.stringify({ type: "answer", answer }));
+      } else if (data.type === "candidate" && peer) {
+        try {
+          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+          console.log("Added ICE candidate");
+        } catch (e) {
+          console.warn("Error adding ICE candidate:", e);
+        }
+      }
+    };
+  </script>
+</body>
+</html>
